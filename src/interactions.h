@@ -199,6 +199,38 @@ glm::vec3 refract(thrust::default_random_engine &rng, glm::vec3 normal, glm::vec
 	return generatedRay;
 }
 
+// Sample a light based on its geometry type and return its poistion and normal
+__host__ __device__ 
+void sampleLight(Geom& lightGeom, glm::vec3& pointOnLight, glm::vec3& normalOnLight, thrust::default_random_engine &rng) {
+	thrust::uniform_real_distribution<float> u01(0, 1);
+
+	if (lightGeom.type == SPHERE) {
+		// Gnerate a point on the light then generate a "reflected ray" and pdf for the selected light from point of intersection to point on light
+		pointOnLight = squareToSphereUniform(glm::vec2(u01(rng), u01(rng)));
+		normalOnLight = glm::vec3(glm::normalize(lightGeom.inverseTransform * glm::vec4(pointOnLight, 0.0f)));
+		// Transform the point on light with the transformation that are applied to the light
+		pointOnLight = glm::vec3(lightGeom.transform * glm::vec4(pointOnLight, 1.0f));
+		// Offsetting the point of intersection in order to avoid self interscetions
+		pointOnLight = pointOnLight + EPSILON * normalOnLight;
+	}
+	else if (lightGeom.type == CUBE) {
+		// Gnerate a point on the light then generate a "reflected ray" and pdf for the selected light from point of intersection to point on light
+		pointOnLight = cubeSample(rng);
+		normalOnLight = getCubeNormal(pointOnLight);
+		normalOnLight = glm::vec3(glm::normalize(lightGeom.inverseTransform * glm::vec4(pointOnLight, 0.0f)));
+		// Transform the point on light with the transformation that are applied to the light
+		pointOnLight = glm::vec3(lightGeom.transform * glm::vec4(pointOnLight, 1.0f));
+		// Offsetting the point of intersection in order to avoid self interscetions
+		pointOnLight = pointOnLight + EPSILON * normalOnLight;
+	}
+}
+
+// HG Uniform Phase function with g = 0;
+__host__ __device__
+float phaseFunction() {
+	return 1.0 / (4.0 * M_PI);
+}
+
 /**
 * Scatter a ray with some probabilities according to the material properties.
 * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
@@ -231,7 +263,11 @@ void scatterRay(
 	glm::vec3 normal,
 	const Material &m,
 	thrust::default_random_engine &rng,
-	bool outside) {
+	bool outside,
+	Geom* geoms,
+	int* light_indixes, 
+	int no_of_lights,
+	Material * materials) {
 	// TODO: implement this.
 	// A basic implementation of pure-diffuse shading will just call the
 	// calculateRandomDirectionInHemisphere defined above.
@@ -270,9 +306,56 @@ void scatterRay(
 		finalColor *= m.color;//fabs(glm::dot(normal, newRayDirection)) * m.color / M_PI / pdf;
 	}
 
+	// Volumetric
+	float transmittance = 1.0f;
+	glm::vec3 scatterLight = glm::vec3(0.0f);
+	glm::vec3 originalPoint = pathSegment.ray.origin;
+	glm::vec3 originalDirection = pathSegment.ray.direction;
+	int numitr = 50;
+	float sigmaS = 0.9;
+	float sigmaA = 0.006;
+	float sigmaE = sigmaA + sigmaS;
+
 	pathSegment.ray.direction = newRayDirection;
 	pathSegment.ray.origin = intersect + 0.01f * newRayDirection;
 	pathSegment.color *= finalColor * glm::abs(glm::dot(normal, newRayDirection));
+
+	float rayLength = glm::length(pathSegment.ray.origin - originalPoint);
+	float ss = rayLength / numitr; // Step Size
+	float deltaX = ss; // Step distance
+	glm::vec3 pOnray = glm::vec3(0.0f);
+
+	//scatterLight += 0.01f * rayLength * glm::vec3(1.0,1.0,1.0);
+	//transmittance = 0.01;
+
+	
+	for (int i = 0; i < numitr; i++) {
+		pOnray = originalPoint + originalDirection * deltaX;
+
+		glm::vec3 inScatterLight = glm::vec3(0.0f);
+
+		for (int j = 0; j < no_of_lights; j++) {
+			glm::vec3 pointOnLight, normalOnLight;
+			Geom& lightGeom = geoms[light_indixes[j]];
+			sampleLight(lightGeom, pointOnLight, normalOnLight, rng);
+			glm::vec3 L = pointOnLight - pOnray;
+			glm::vec3 Li = 100.0f * materials[lightGeom.materialid].color / glm::dot(L, L); // Light emmited by the light source
+			inScatterLight += sigmaS * Li * phaseFunction();
+		}
+
+		//printf("%f,%f,%f, %f\n", inScatterLight.x, inScatterLight.y, inScatterLight.z, transmittance);
+
+		float exponentE = glm::exp(-sigmaE * ss);
+		glm::vec3 integration = (inScatterLight - inScatterLight * exponentE) / sigmaE;
+		scatterLight += transmittance * integration;
+		transmittance *= exponentE;
+		//printf("%f,%f,%f, %f\n", scatterLight.x, scatterLight.y, scatterLight.z, transmittance);
+		deltaX += ss;
+	}
+	
+	//printf("(%f, %f, %f) \n", scatterLight.x, scatterLight.y, scatterLight.z);
+
+	pathSegment.color = pathSegment.color * transmittance + scatterLight;
 }
 
 /**
@@ -318,29 +401,11 @@ void ShadeDirectLighting(thrust::default_random_engine& rng, glm::vec3 intersect
 
 	// Randomly select one light and calculate a ray from the intersect point to the light based on the light polygon type sampling
 	int light_index = u01(rng) * no_of_lights;
-	Geom &lightGeom = geoms[light_indixes[light_index]];
+	Geom& lightGeom = geoms[light_indixes[light_index]];
 	glm::vec3 pointOnLight;
 	glm::vec3 normalOnLight;
 
-	if (lightGeom.type == SPHERE) {
-		// Gnerate a point on the light then generate a "reflected ray" and pdf for the selected light from point of intersection to point on light
-		pointOnLight = squareToSphereUniform(glm::vec2(u01(rng), u01(rng)));
-		normalOnLight = glm::vec3(glm::normalize(lightGeom.inverseTransform * glm::vec4(pointOnLight, 0.0f)));
-		// Transform the point on light with the transformation that are applied to the light
-		pointOnLight = glm::vec3(lightGeom.transform * glm::vec4(pointOnLight, 1.0f));
-		// Offsetting the point of intersection in order to avoid self interscetions
-		pointOnLight = pointOnLight + EPSILON * normalOnLight;
-	}
-	else if (lightGeom.type == CUBE) {
-		// Gnerate a point on the light then generate a "reflected ray" and pdf for the selected light from point of intersection to point on light
-		pointOnLight = cubeSample(rng);
-		normalOnLight = getCubeNormal(pointOnLight);
-		normalOnLight = glm::vec3(glm::normalize(lightGeom.inverseTransform * glm::vec4(pointOnLight, 0.0f)));
-		// Transform the point on light with the transformation that are applied to the light
-		pointOnLight = glm::vec3(lightGeom.transform * glm::vec4(pointOnLight, 1.0f));
-		// Offsetting the point of intersection in order to avoid self interscetions
-		pointOnLight = pointOnLight + EPSILON * normalOnLight;
-	}
+	sampleLight(lightGeom, pointOnLight, normalOnLight, rng);
 
 	Ray r;
 	r.direction = glm::normalize(pointOnLight - intersectPoint);
@@ -392,5 +457,5 @@ void ShadeDirectLighting(thrust::default_random_engine& rng, glm::vec3 intersect
 	}
 
 	// Set the final color of the object (LTE)
-	tempPS.color *= materialColor * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * adot / pdf;
+	tempPS.color = tempPS.color * materialColor * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * adot / pdf;
 }

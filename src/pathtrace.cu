@@ -459,7 +459,7 @@ __global__ void kernBRDFBasedShader(int iter, int num_paths, ShadeableIntersecti
 				glm::vec3 intersectPoint = tempPS.ray.origin + intersection.t * tempPS.ray.direction;
 				intersectPoint = intersectPoint + EPSILON * shadeableIntersections[idx].surfaceNormal;
 				
-				scatterRay(tempPS, intersectPoint, intersection.surfaceNormal, material, rng, intersection.outside);
+				scatterRay(tempPS, intersectPoint, intersection.surfaceNormal, material, rng, intersection.outside, geoms, light_indixes, no_of_lights, materials);
 				tempPS.remainingBounces--;
 #if LASTBOUNCEDIRECTLIGHTING
 				if (tempPS.remainingBounces == 0) {
@@ -696,7 +696,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 			num_paths = partition_segments - dev_paths;
 			iterationComplete = (num_paths == 0) || (depth == 0);
 #endif
-
+			break;
 		depth--;
 #if PERDEPTHTIMER
 		auto endDepth = std::chrono::high_resolution_clock::now();
