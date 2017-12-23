@@ -225,10 +225,62 @@ void sampleLight(Geom& lightGeom, glm::vec3& pointOnLight, glm::vec3& normalOnLi
 	}
 }
 
-// HG Uniform Phase function with g = 0;
+// HG Phase Function
 __host__ __device__
-float phaseFunction() {
-	return 1.0 / (4.0 * M_PI);
+float phaseFunctionHG(float cosTheta) {
+	float denom = 1.0f + g * g + 2.0f * g * cosTheta;
+	return (1.0f / (4.0f * PI)) * (1.0f - g * g) / (denom * std::sqrt(denom));
+}
+
+// Generate a new direction based on the phase function g value
+__host__ __device__
+float phaseSample_P(const glm::vec3& wo, glm::vec3& wi, thrust::default_random_engine &rng) {
+	thrust::uniform_real_distribution<float> u01(0, 1);
+	
+	// Compute CosTheta for HG Sample
+	float cosTheta;
+	float sinTheta;
+	float phi;
+	float ep = 0.001;
+	if((g < ep) && (g > -ep)) {
+		cosTheta = 1 - 2.0f * u01(rng);
+	}
+	else {
+		float sqTerm = (1.0f - g * g) / (1.0f - g + 2.0f * g * u01(rng));
+		cosTheta = (1.0f + g * g - sqTerm * sqTerm) / (2.0f * g);
+	}
+	sinTheta = std::sqrt(std::max(0.0f, 1 - cosTheta * cosTheta));
+	phi = 2.0f * PI * u01(rng);
+
+	// Compute new Wi for HG sample
+	wi = glm::vec3(sinTheta * glm::cos(phi), sinTheta * glm::sin(phi), cosTheta);
+	
+	// return PhaseFunctionHG value
+	return phaseFunctionHG(-cosTheta);
+}
+
+// Generate a new ray direction for random walk in the volume
+__host__ __device__
+void generateNewRayInMedium(PathSegment & pathSegment, glm::vec3 intersect, Geom* geoms, thrust::default_random_engine &rng, int* light_indixes, int no_of_lights, bool outside, Material * materials) {
+	// generate a new Wi direction
+	glm::vec3 newDirection;
+	float pdf = phaseSample_P(pathSegment.ray.direction, newDirection, rng);
+
+	// Sample one light randomly and estimate the direct lighting contribution at this point and multiply it with the transmittance
+	thrust::uniform_real_distribution<float> u01(0, 1);
+	int light_index = u01(rng) * no_of_lights;
+	Geom& lightGeom = geoms[light_indixes[light_index]];
+	glm::vec3 pointOnLight;
+	glm::vec3 normalOnLight;
+	sampleLight(lightGeom, pointOnLight, normalOnLight, rng);
+
+	float t = glm::length(pointOnLight - intersect); // distance of the point on light from the point in the medium
+	float tr = estimateTransmittance(t); // transmittance along the light direction (no volume sampling done in this case)
+
+	// set the new Wi and update the color
+	pathSegment.ray.origin = intersect;
+	pathSegment.ray.direction = newDirection;
+	pathSegment.color = pathSegment.color * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * tr / pdf;
 }
 
 /**
@@ -306,56 +358,9 @@ void scatterRay(
 		finalColor *= m.color;//fabs(glm::dot(normal, newRayDirection)) * m.color / M_PI / pdf;
 	}
 
-	// Volumetric
-	float transmittance = 1.0f;
-	glm::vec3 scatterLight = glm::vec3(0.0f);
-	glm::vec3 originalPoint = pathSegment.ray.origin;
-	glm::vec3 originalDirection = pathSegment.ray.direction;
-	int numitr = 50;
-	float sigmaS = 0.9;
-	float sigmaA = 0.006;
-	float sigmaE = sigmaA + sigmaS;
-
 	pathSegment.ray.direction = newRayDirection;
 	pathSegment.ray.origin = intersect + 0.01f * newRayDirection;
 	pathSegment.color *= finalColor * glm::abs(glm::dot(normal, newRayDirection));
-
-	float rayLength = glm::length(pathSegment.ray.origin - originalPoint);
-	float ss = rayLength / numitr; // Step Size
-	float deltaX = ss; // Step distance
-	glm::vec3 pOnray = glm::vec3(0.0f);
-
-	//scatterLight += 0.01f * rayLength * glm::vec3(1.0,1.0,1.0);
-	//transmittance = 0.01;
-
-	
-	for (int i = 0; i < numitr; i++) {
-		pOnray = originalPoint + originalDirection * deltaX;
-
-		glm::vec3 inScatterLight = glm::vec3(0.0f);
-
-		for (int j = 0; j < no_of_lights; j++) {
-			glm::vec3 pointOnLight, normalOnLight;
-			Geom& lightGeom = geoms[light_indixes[j]];
-			sampleLight(lightGeom, pointOnLight, normalOnLight, rng);
-			glm::vec3 L = pointOnLight - pOnray;
-			glm::vec3 Li = 100.0f * materials[lightGeom.materialid].color / glm::dot(L, L); // Light emmited by the light source
-			inScatterLight += sigmaS * Li * phaseFunction();
-		}
-
-		//printf("%f,%f,%f, %f\n", inScatterLight.x, inScatterLight.y, inScatterLight.z, transmittance);
-
-		float exponentE = glm::exp(-sigmaE * ss);
-		glm::vec3 integration = (inScatterLight - inScatterLight * exponentE) / sigmaE;
-		scatterLight += transmittance * integration;
-		transmittance *= exponentE;
-		//printf("%f,%f,%f, %f\n", scatterLight.x, scatterLight.y, scatterLight.z, transmittance);
-		deltaX += ss;
-	}
-	
-	//printf("(%f, %f, %f) \n", scatterLight.x, scatterLight.y, scatterLight.z);
-
-	pathSegment.color = pathSegment.color * transmittance + scatterLight;
 }
 
 /**

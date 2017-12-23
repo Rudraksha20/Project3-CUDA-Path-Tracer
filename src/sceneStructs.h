@@ -77,4 +77,5 @@ struct ShadeableIntersection {
   glm::vec3 surfaceNormal;
   int materialId;
   bool outside;
+  bool volume;
 };

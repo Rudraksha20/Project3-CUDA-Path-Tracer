@@ -23,16 +23,17 @@
 
 // Toggle options for features 1 - ON & 0 - OFF
 #define ERRORCHECK	0
-#define AA	1
-#define DOF	0
-#define PATHCOMPACTION	0
-#define NAIVEDIRECTLIGHTING	0		// This implementation performs DL on the first Bounce and continues to the next iteration
-#define LASTBOUNCEDIRECTLIGHTING  0
-#define CACHEFIRSTBOUNCE 0
-#define SORTPATHSBYMATERIAL 0
+#define AA	0							// Anti-Aliasing
+#define DOF	0							// Depth of Field
+#define PATHCOMPACTION	0				// Remove paths that have terminated
+#define NAIVEDIRECTLIGHTING	0			// This implementation performs DL on the first Bounce and continues to the next iteration
+#define LASTBOUNCEDIRECTLIGHTING  0		// Calculate the DL contribution for the last bounce of the ray
+#define CACHEFIRSTBOUNCE 0				// Cache the first bounce to reduce the time spent on subsequent ietartions. Not applicatble when AA or DOF is turned on
+#define SORTPATHSBYMATERIAL 0			// Sort the rays by material intersections to have a more kernel efficient execution of cuda threads 
+#define HMEDIUM 1						// Enable for Homogenous medium in the scene
 // Toggle for performance analysis
-#define PERITERATIONTIMER 0
-#define	PERDEPTHTIMER 0
+#define PERITERATIONTIMER 0				// Time per iteration
+#define	PERDEPTHTIMER 0					// Time per depth in the iteration
 
 // Enums used for Material Sorting
 enum MaterialType { NO, DIFFUSE, REFLECTIVE, REFRACTIVE, LIGHT };
@@ -283,22 +284,55 @@ __global__ void computeIntersections(
 			}
 		}
 
+#if HMEDIUM
+		// Find intersection with Volume (Homogenous medium) and find t
+		thrust::default_random_engine rng = makeSeededRandomEngine(0, path_index, depth);
+		t = volumeIntersectionTest(rng);
+#endif
+
+		// If intersects with volume update t_min if t < t_min
+		// Update the intersections to store the new t_min and update the volume boolean to TRUE
 		if (hit_geom_index == -1)
 		{
 			intersections[path_index].t = -1.0f;
 
-#if SORTBYMATERIAL
+			// For now if there is homogenous medium then there will always be an intersection
+			// Replace this with a maximum distance later
+//#if HMEDIUM
+//			intersections[path_index].t = t;
+//			intersections[path_index].volume = true;
+//#endif
+
+#if SORTPATHSBYMATERIAL
 			sortMaterialPaths[path_index] = NO;
 			sortmaterialIntersections[path_index] = NO;
 #endif
 		}
 		else
 		{
-			//The ray hits something
+#if HMEDIUM
+			if (t < t_min) {
+				intersections[path_index].t = t;
+				intersections[path_index].volume = true;
+			}
+			else {
+				//The ray hits something in the scene
+				intersections[path_index].t = t_min;
+				intersections[path_index].materialId = geoms[hit_geom_index].materialid;
+				intersections[path_index].surfaceNormal = normal;
+				intersections[path_index].outside = outside;
+				intersections[path_index].volume = false;
+			}
+#endif
+
+#if !HMEDIUM
+			//The ray hits something in the scene
 			intersections[path_index].t = t_min;
 			intersections[path_index].materialId = geoms[hit_geom_index].materialid;
 			intersections[path_index].surfaceNormal = normal;
 			intersections[path_index].outside = outside;
+			intersections[path_index].volume = false;
+#endif
 
 #if SORTPATHSBYMATERIAL
 			Material material = materials[geoms[hit_geom_index].materialid];
@@ -440,32 +474,57 @@ __global__ void kernBRDFBasedShader(int iter, int num_paths, ShadeableIntersecti
 									 // makeSeededRandomEngine as well.
 			thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, depth);
 			thrust::uniform_real_distribution<float> u01(0, 1);
-
-			Material material = materials[intersection.materialId];
-			glm::vec3 materialColor = material.color;
-
 			PathSegment& tempPS = pathSegments[idx];
 
-			// If the material indicates that the object was a light, "light" the ray
-			if (material.emittance > 0.0f) {
-				tempPS.color *= (materialColor * material.emittance);
-				tempPS.remainingBounces = 0;
-				//if (PATHCOMPACTION) {
-				//	indixes[temp_idx] = 0;
-				//}
-			}
-			// TODO: PBRT based shading function
-			else {
+			if (intersection.volume) {
+				glm::vec3 materialColor = Albedo;
+
+				// Do volume interaction and generate a new ray for the random walk through the medium
 				glm::vec3 intersectPoint = tempPS.ray.origin + intersection.t * tempPS.ray.direction;
-				intersectPoint = intersectPoint + EPSILON * shadeableIntersections[idx].surfaceNormal;
-				
-				scatterRay(tempPS, intersectPoint, intersection.surfaceNormal, material, rng, intersection.outside, geoms, light_indixes, no_of_lights, materials);
+				generateNewRayInMedium(tempPS, intersectPoint, geoms, rng, light_indixes, no_of_lights, intersection.outside, materials);
+
+				// Multiply the transmittance to the volume color and multiply it to the accumulated color
+				float tr = estimateTransmittance(intersection.t);
+				tempPS.color = tempPS.color * materialColor * tr;
 				tempPS.remainingBounces--;
-#if LASTBOUNCEDIRECTLIGHTING
-				if (tempPS.remainingBounces == 0) {
-					ShadeDirectLighting(rng, intersectPoint, shadeableIntersections[idx].surfaceNormal, geoms, geoms_size, light_indixes, no_of_lights, tempPS, materialColor, materials);
-				}
+			}
+			else {
+				Material material = materials[intersection.materialId];
+				glm::vec3 materialColor = material.color;
+
+				// If the material indicates that the object was a light, "light" the ray
+				if (material.emittance > 0.0f) {
+					tempPS.color *= (materialColor * material.emittance);
+					tempPS.remainingBounces = 0;
+					//if (PATHCOMPACTION) {
+					//	indixes[temp_idx] = 0;
+					//}
+#if HMEDIUM
+					// Multiply the color by the transmittance
+					float tr = estimateTransmittance(intersection.t);
+					tempPS.color = tempPS.color * tr;
 #endif
+				}
+				// TODO: PBRT based shading function
+				else {
+					glm::vec3 intersectPoint = tempPS.ray.origin + intersection.t * tempPS.ray.direction;
+					intersectPoint = intersectPoint + EPSILON * shadeableIntersections[idx].surfaceNormal;
+
+					scatterRay(tempPS, intersectPoint, intersection.surfaceNormal, material, rng, intersection.outside, geoms, light_indixes, no_of_lights, materials);
+					tempPS.remainingBounces--;
+
+#if HMEDIUM
+					// Multiply the color by the transmittance
+					float tr = estimateTransmittance(intersection.t);
+					tempPS.color = tempPS.color * tr;
+#endif
+
+#if LASTBOUNCEDIRECTLIGHTING
+					if (tempPS.remainingBounces == 0) {
+						ShadeDirectLighting(rng, intersectPoint, shadeableIntersections[idx].surfaceNormal, geoms, geoms_size, light_indixes, no_of_lights, tempPS, materialColor, materials);
+					}
+#endif
+				}
 			}
 		}
 		else {
@@ -696,7 +755,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 			num_paths = partition_segments - dev_paths;
 			iterationComplete = (num_paths == 0) || (depth == 0);
 #endif
-			break;
+	
 		depth--;
 #if PERDEPTHTIMER
 		auto endDepth = std::chrono::high_resolution_clock::now();

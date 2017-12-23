@@ -142,3 +142,31 @@ __host__ __device__ float sphereIntersectionTest(Geom sphere, Ray r,
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+/** Volume Intersection
+*	This function determines an itersection point along the ray in the medium.
+*	This point of intersection is used for scattering the ray along a mean free path in the volume determined by the density of the volume.
+*
+*	@return t -	Distance of a point along the ray where volume intersection is found
+**/
+__host__ __device__ float volumeIntersectionTest(thrust::default_random_engine &rng) {
+	float t;
+	thrust::uniform_real_distribution<float> u01(0, 1);
+
+	// Calculate the t value for the intersection of the ray with the particles in the volume
+	t = -(glm::log(1 - u01(rng)) / SigmaT);
+
+	return t;
+}
+
+/** Transmittance for Homogenous media
+*	@param t   -	The distance along the ray from the point of origin to a point in the medium or on a surface intersection
+*	@return tr -	The transmittance of the medium along the length of the ray
+**/
+__host__ __device__ float estimateTransmittance(float t) {
+	float tr;
+
+	tr = glm::exp(-SigmaT * t);
+
+	return tr;
+}

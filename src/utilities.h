@@ -14,6 +14,13 @@
 #define SQRT_OF_ONE_THIRD 0.5773502691896257645091487805019574556476f
 #define EPSILON           0.00001f
 
+// Volumetric Properties of Homogenous medium
+#define SigmaA			  0.004							// Absorption coefficient
+#define SigmaS			  0.003							// Scattering coefficient
+#define SigmaT			  SigmaA + SigmaS				// Extinction coefficient
+#define Albedo			  glm::vec3(SigmaS / SigmaT);	// Volume albedo
+#define g				  -0.5f							// Used in HG phase function to determine isotropic (g = 0) or anisotropic (g < 0 || g > 0) scattering
+
 namespace utilityCore {
     extern float clamp(float f, float min, float max);
     extern bool replaceString(std::string& str, const std::string& from, const std::string& to);
