@@ -256,7 +256,7 @@ float phaseSample_P(const glm::vec3& wo, glm::vec3& wi, thrust::default_random_e
 	wi = glm::vec3(sinTheta * glm::cos(phi), sinTheta * glm::sin(phi), cosTheta);
 	
 	// return PhaseFunctionHG value
-	return phaseFunctionHG(-cosTheta);
+	return phaseFunctionHG(cosTheta);
 }
 
 // Generate a new ray direction for random walk in the volume
@@ -280,7 +280,7 @@ void generateNewRayInMedium(PathSegment & pathSegment, glm::vec3 intersect, Geom
 	// set the new Wi and update the color
 	pathSegment.ray.origin = intersect;
 	pathSegment.ray.direction = newDirection;
-	pathSegment.color = pathSegment.color * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * tr / pdf;
+	pathSegment.color = pathSegment.color * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * tr / (t * t);
 }
 
 /**
