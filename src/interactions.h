@@ -256,7 +256,7 @@ float phaseSample_P(const glm::vec3& wo, glm::vec3& wi, thrust::default_random_e
 	wi = glm::vec3(sinTheta * glm::cos(phi), sinTheta * glm::sin(phi), cosTheta);
 	
 	// return PhaseFunctionHG value
-	return phaseFunctionHG(cosTheta);
+	return phaseFunctionHG(-cosTheta);
 }
 
 // Generate a new ray direction for random walk in the volume

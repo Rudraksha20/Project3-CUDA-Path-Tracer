@@ -299,8 +299,10 @@ __global__ void computeIntersections(
 			// For now if there is homogenous medium then there will always be an intersection
 			// Replace this with a maximum distance later
 //#if HMEDIUM
-//			intersections[path_index].t = t;
-//			intersections[path_index].volume = true;
+//			if (t > 0.0f) {
+//				intersections[path_index].t = t;
+//				intersections[path_index].volume = true;
+//			}
 //#endif
 
 #if SORTPATHSBYMATERIAL
