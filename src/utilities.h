@@ -15,8 +15,8 @@
 #define EPSILON           0.00001f
 
 // Volumetric Properties of Homogenous medium
-#define SigmaA			  0.004							// Absorption coefficient
-#define SigmaS			  0.003							// Scattering coefficient
+#define SigmaA			  0.04							// Absorption coefficient
+#define SigmaS			  0.03							// Scattering coefficient
 #define SigmaT			  SigmaA + SigmaS				// Extinction coefficient
 #define Albedo			  glm::vec3(SigmaS / SigmaT);	// Volume albedo
 #define g				  -0.5f							// Used in HG phase function to determine isotropic (g = 0) or anisotropic (g < 0 || g > 0) scattering

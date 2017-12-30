@@ -261,10 +261,12 @@ float phaseSample_P(const glm::vec3& wo, glm::vec3& wi, thrust::default_random_e
 
 // Generate a new ray direction for random walk in the volume
 __host__ __device__
-void generateNewRayInMedium(PathSegment & pathSegment, glm::vec3 intersect, Geom* geoms, thrust::default_random_engine &rng, int* light_indixes, int no_of_lights, bool outside, Material * materials) {
+void generateNewRayInMedium(PathSegment & pathSegment, glm::vec3 intersect, Geom* geoms, thrust::default_random_engine &rng, int* light_indixes, int no_of_lights, bool outside, Material * materials, glm::vec3 volumeColor) {
 	// generate a new Wi direction
 	glm::vec3 newDirection;
 	float pdf = phaseSample_P(pathSegment.ray.direction, newDirection, rng);
+
+	//printf("pdf - %f \n", pdf);
 
 	// Sample one light randomly and estimate the direct lighting contribution at this point and multiply it with the transmittance
 	thrust::uniform_real_distribution<float> u01(0, 1);
@@ -280,7 +282,14 @@ void generateNewRayInMedium(PathSegment & pathSegment, glm::vec3 intersect, Geom
 	// set the new Wi and update the color
 	pathSegment.ray.origin = intersect;
 	pathSegment.ray.direction = newDirection;
-	pathSegment.color = pathSegment.color * materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * tr / (t * t);
+
+	// Calculate the inscattering color
+	glm::vec3 inScatteringColor = materials[geoms[light_index].materialid].color * materials[geoms[light_index].materialid].emittance * tr / (t * t);
+
+	// Calulate the new final color contribution 
+	glm::vec3 finalColor = (/*inScatteringColor +*/ volumeColor);
+
+	pathSegment.color *= finalColor;
 }
 
 /**

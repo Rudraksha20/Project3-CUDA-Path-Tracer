@@ -311,12 +311,13 @@ __global__ void computeIntersections(
 		else
 		{
 #if HMEDIUM
-			if (t < t_min) {
+			if (t < t_min && t > 0.0f) {
+				// The ray hits the volume particles
 				intersections[path_index].t = t;
 				intersections[path_index].volume = true;
 			}
 			else {
-				//The ray hits something in the scene
+				// The ray hits something in the scene (actual geometry) 
 				intersections[path_index].t = t_min;
 				intersections[path_index].materialId = geoms[hit_geom_index].materialid;
 				intersections[path_index].surfaceNormal = normal;
@@ -326,7 +327,7 @@ __global__ void computeIntersections(
 #endif
 
 #if !HMEDIUM
-			//The ray hits something in the scene
+			// The ray hits something in the scene (actual geometry)
 			intersections[path_index].t = t_min;
 			intersections[path_index].materialId = geoms[hit_geom_index].materialid;
 			intersections[path_index].surfaceNormal = normal;
@@ -477,15 +478,15 @@ __global__ void kernBRDFBasedShader(int iter, int num_paths, ShadeableIntersecti
 			PathSegment& tempPS = pathSegments[idx];
 
 			if (intersection.volume) {
-				glm::vec3 materialColor = Albedo;
+				glm::vec3 volumeColor = Albedo;
+				// Multiply the transmittance to the volume color and multiply it to the accumulated color
+				float tr = estimateTransmittance(intersection.t);
+				volumeColor *= tr;
 
 				// Do volume interaction and generate a new ray for the random walk through the medium
 				glm::vec3 intersectPoint = tempPS.ray.origin + intersection.t * tempPS.ray.direction;
-				generateNewRayInMedium(tempPS, intersectPoint, geoms, rng, light_indixes, no_of_lights, intersection.outside, materials);
+				generateNewRayInMedium(tempPS, intersectPoint, geoms, rng, light_indixes, no_of_lights, intersection.outside, materials, volumeColor);
 
-				// Multiply the transmittance to the volume color and multiply it to the accumulated color
-				float tr = estimateTransmittance(intersection.t);
-				tempPS.color = tempPS.color * materialColor * tr;
 				tempPS.remainingBounces--;
 			}
 			else {

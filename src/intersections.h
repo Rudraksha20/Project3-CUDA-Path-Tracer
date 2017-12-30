@@ -155,7 +155,7 @@ __host__ __device__ float volumeIntersectionTest(thrust::default_random_engine &
 
 	// Calculate the t value for the intersection of the ray with the particles in the volume
 	t = -(glm::log(1 - u01(rng)) / SigmaT);
-
+	//printf("t value - %f \n",t);
 	return t;
 }
 
@@ -167,6 +167,6 @@ __host__ __device__ float estimateTransmittance(float t) {
 	float tr;
 
 	tr = glm::exp(-SigmaT * t);
-
+	//printf("transmitance - %f \n",tr);
 	return tr;
 }
